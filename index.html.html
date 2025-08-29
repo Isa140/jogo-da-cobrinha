@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Cobrinha da Horta 🍎</title>
+<style>
+body {
+  margin: 0;
+  background: #0f1226;
+  color: #e7ecff;
+  font-family: Arial, sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+canvas {
+  background: #071028;
+  border-radius: 14px;
+  display: none;
+}
+.hud {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  gap: 10px;
+}
+.card {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+.btn {
+  cursor: pointer;
+  background: rgba(255,255,255,0.2);
+}
+.overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: white;
+  font-size: 20px;
+  flex-direction: column;
+  padding: 20px;
+  text-align: center;
+}
+.hidden { display: none; }
+button {
+  margin: 6px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #1d224a;
+  color: white;
+  cursor: pointer;
+  font-size: 16px;
+}
+.rules {
+  margin-bottom: 20px;
+  text-align: left;
+  max-width: 400px;
+}
+.rules p { margin: 6px 0; }
+</style>
+</head>
+<body>
+<canvas id="game" width="600" height="400"></canvas>
+
+<div class="hud hidden" id="hud">
+  <div class="card">Pontuação: <span id="score">0</span></div>
+  <div class="card">Tamanho: <span id="length">1</span></div>
+  <div class="card btn" id="pauseBtn">⏸️ Pausar</div>
+  <div class="card btn" id="restartBtn">🔄 Reiniciar</div>
+</div>
+
+<div class="overlay" id="startOverlay">
+  <h1>🐍 Cobrinha da Horta 🍎</h1>
+  <div class="rules">
+    <p>📖 <strong>Como jogar:</strong></p>
+    <p>➡️ Use as setas do teclado para mover a cobrinha.</p>
+    <p>🍎 Comer frutas e verduras: cresce +1, pontuação +1.</p>
+    <p>🍔 Comidas ruins: diminui -3 tamanho.</p>
+    <p>⚠️ Se tamanho chegar a 0 ou colidir consigo mesma, o jogo acaba.</p>
+    <p>⏸️ Aperte "P" para pausar e veja opções de continuar ou reiniciar.</p>
+  </div>
+  <button id="startBtn">▶️ Começar</button>
+</div>
+
+<div class="overlay hidden" id="pauseOverlay">
+  <p>⏸️ Jogo Pausado</p>
+  <button id="continueBtn">▶️ Continuar</button>
+  <button id="resetBtn">🔄 Reiniciar</button>
+</div>
+
+<div class="overlay hidden" id="gameOverOverlay">
+  <p>💀 Game Over!</p>
+  <p id="finalScore"></p>
+  <button id="restartGameOverBtn">🔄 Reiniciar</button>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const scoreEl = document.getElementById("score");
+const lengthEl = document.getElementById("length");
+const hud = document.getElementById("hud");
+
+const pauseBtn = document.getElementById("pauseBtn");
+const restartBtn = document.getElementById("restartBtn");
+const pauseOverlay = document.getElementById("pauseOverlay");
+const gameOverOverlay = document.getElementById("gameOverOverlay");
+const continueBtn = document.getElementById("continueBtn");
+const resetBtn = document.getElementById("resetBtn");
+const restartGameOverBtn = document.getElementById("restartGameOverBtn");
+const finalScore = document.getElementById("finalScore");
+
+const startOverlay = document.getElementById("startOverlay");
+const startBtn = document.getElementById("startBtn");
+
+const gridSize = 20;
+let snake, dx, dy, score, isPaused, gameLoop, grow;
+const speedInterval = 115;
+
+let goodFoods = [];
+let badFoods = [];
+const maxGood = 6;
+const maxBad = 5;
+const goodEmojis = ["🍎","🍓","🥕","🥦","🍇"];
+const badEmojis = ["🍔","🍟","🍕","🍩","🌭"];
+const itemLife = 5000;
+
+function randomEmoji(list) { return list[Math.floor(Math.random() * list.length)]; }
+
+function spawnItem(list, emojis) {
+  const item = {
+    x: Math.floor(Math.random() * (canvas.width / gridSize)) * gridSize,
+    y: Math.floor(Math.random() * (canvas.height / gridSize)) * gridSize,
+    emoji: randomEmoji(emojis),
+    createdAt: Date.now()
+  };
+  list.push(item);
+}
+
+function resetGame() {
+  snake = [{ x: 9 * gridSize, y: 9 * gridSize }];
+  dx = gridSize; dy = 0;
+  score = 0;
+  grow = 0;
+  goodFoods = []; badFoods = [];
+  for(let i=0;i<maxGood;i++) spawnItem(goodFoods, goodEmojis);
+  for(let i=0;i<maxBad;i++) spawnItem(badFoods, badEmojis);
+  updateHUD();
+  isPaused = false;
+  if (gameLoop) clearInterval(gameLoop);
+  gameLoop = setInterval(draw, speedInterval);
+  gameOverOverlay.style.display = "none";
+  pauseOverlay.style.display = "none";
+}
+
+function updateHUD() {
+  scoreEl.textContent = score;
+  lengthEl.textContent = snake.length;
+}
+
+function draw() {
+  ctx.fillStyle = "#071028";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // cobra
+  ctx.fillStyle = "lime";
+  snake.forEach((part) => ctx.fillRect(part.x, part.y, gridSize-2, gridSize-2));
+
+  const now = Date.now();
+
+  // desenhar comidas boas suavemente
+  ctx.font = "20px Arial";
+  goodFoods.forEach((item, i) => {
+    ctx.fillText(item.emoji, item.x + 2, item.y + 18);
+    if(now - item.createdAt > itemLife) {
+      goodFoods.splice(i,1);
+      spawnItem(goodFoods, goodEmojis);
+    }
+  });
+
+  badFoods.forEach((item, i) => {
+    ctx.fillText(item.emoji, item.x + 2, item.y + 18);
+    if(now - item.createdAt > itemLife) {
+      badFoods.splice(i,1);
+      spawnItem(badFoods, badEmojis);
+    }
+  });
+
+  const head = { x: snake[0].x + dx, y: snake[0].y + dy };
+
+  if (head.x < 0) head.x = canvas.width - gridSize;
+  if (head.x >= canvas.width) head.x = 0;
+  if (head.y < 0) head.y = canvas.height - gridSize;
+  if (head.y >= canvas.height) head.y = 0;
+
+  if (snake.some((part) => part.x === head.x && part.y === head.y)) {
+    gameOver();
+    return;
+  }
+
+  snake.unshift(head);
+
+  // comer comida boa
+  goodFoods.forEach((item,i)=>{
+    if(head.x === item.x && head.y === item.y){
+      score +=1;
+      grow +=1;
+      goodFoods.splice(i,1);
+      spawnItem(goodFoods, goodEmojis);
+    }
+  });
+
+  // comida ruim
+  badFoods.forEach((item,i)=>{
+    if(head.x === item.x && head.y === item.y){
+      grow -=3;
+      if(snake.length + grow <=0){ gameOver(); return; }
+      badFoods.splice(i,1);
+      spawnItem(badFoods, badEmojis);
+    }
+  });
+
+  if(grow>0){ grow--; } else { snake.pop(); }
+
+  updateHUD();
+}
+
+function gameOver() {
+  clearInterval(gameLoop);
+  finalScore.textContent = "Pontuação final: " + score;
+  gameOverOverlay.style.display = "flex";
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowUp" && dy === 0) { dx = 0; dy = -gridSize; }
+  else if (e.key === "ArrowDown" && dy === 0) { dx = 0; dy = gridSize; }
+  else if (e.key === "ArrowLeft" && dx === 0) { dx = -gridSize; dy = 0; }
+  else if (e.key === "ArrowRight" && dx === 0) { dx = gridSize; dy = 0; }
+  else if (e.key.toLowerCase() === "p") togglePause();
+  else if (e.key.toLowerCase() === "r") resetGame();
+});
+
+pauseBtn.addEventListener("click", togglePause);
+restartBtn.addEventListener("click", resetGame);
+continueBtn.addEventListener("click", togglePause);
+resetBtn.addEventListener("click", resetGame);
+restartGameOverBtn.addEventListener("click", resetGame);
+
+startBtn.addEventListener("click", () => {
+  startOverlay.style.display = "none";
+  canvas.style.display = "block";
+  hud.classList.remove("hidden");
+  resetGame();
+});
+
+function togglePause() {
+  if (isPaused) {
+    isPaused = false;
+    pauseOverlay.style.display = "none";
+    gameLoop = setInterval(draw, speedInterval);
+  } else {
+    isPaused = true;
+    pauseOverlay.style.display = "flex";
+    clearInterval(gameLoop);
+  }
+}
+</script>
+</body>
+</html>
